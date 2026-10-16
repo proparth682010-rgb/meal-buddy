@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chore & Meal Buddy: simulated Alexa+ skill</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap">
+<style>
+:root{--bg:#e9f0ee;--panel:#fbfdfc;--ink:#12302c;--muted:#52706b;--line:#c5d5d1;--mint:#2f8f7b;--shop:#ffd84d;--chore:#ff8f7a;--meal:#8fc7ff;--tool:#0f2421;--toolink:#b8f2e0}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1a18;--panel:#162623;--ink:#e6f2ef;--muted:#92b0aa;--line:#2a403c;--mint:#4fc2a8}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Bricolage Grotesque",system-ui,-apple-system,"Segoe UI",sans-serif}
+header{padding:20px 24px 4px}
+h1{margin:0;font-size:clamp(1.6rem,4vw,2.4rem);font-weight:800;letter-spacing:-.02em}
+header p{margin:4px 0 0;color:var(--muted);max-width:60ch}
+main{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:20px;padding:16px 24px 28px;max-width:1150px;margin:0 auto}
+@media (max-width:820px){main{grid-template-columns:1fr}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;min-width:0}
+h2{margin:0 0 10px;font-size:1.05rem}
+#log{height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 2px}
+.msg{max-width:85%;padding:8px 12px;border-radius:14px;overflow-wrap:anywhere}
+.me{align-self:flex-end;background:var(--mint);color:#fff;border-bottom-right-radius:4px}
+.bot{align-self:flex-start;background:var(--bg);border-bottom-left-radius:4px}
+form{display:flex;gap:8px;margin-top:10px}
+input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;background:var(--panel);color:var(--ink)}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:10px 14px;background:var(--mint);color:#fff;cursor:pointer}
+button.ghost{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+button[aria-pressed=true]{background:var(--chore)}
+:focus-visible{outline:3px solid var(--meal);outline-offset:2px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chips button{padding:5px 10px;font-weight:400;font-size:.85rem}
+.board{display:grid;gap:12px}
+.card{border-radius:10px;padding:10px 12px;color:#1b1b1b}
+.card h3{margin:0 0 6px;font-size:.95rem}
+.card ul{margin:0;padding-left:18px}
+.card li{overflow-wrap:anywhere}
+.shop{background:var(--shop)}.chore{background:var(--chore)}.meal{background:var(--meal)}
+.empty{opacity:.7;font-style:italic;list-style:none;margin-left:-18px}
+.meal li{list-style:none;margin-left:-18px;display:flex;gap:8px}
+.meal b{min-width:2.6em}
+.today b{text-decoration:underline}
+#tools{grid-column:1/-1;background:var(--tool);color:var(--toolink);border-color:var(--tool)}
+#tools h2{color:#fff}
+#tools p{margin:0 0 8px;color:#8fb8ab;font-size:.9rem}
+#calls{max-height:220px;overflow:auto;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
+#calls div{padding:6px 0;border-top:1px solid #23413b;white-space:pre-wrap;overflow-wrap:anywhere}
+#calls .res{color:#fff}
+footer{text-align:center;color:var(--muted);font-size:.85rem;padding-bottom:20px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Chore & Meal Buddy</h1>
+  <p>A simulated Alexa+ skill for the family kitchen. Talk or type, and watch the lists update. Every request becomes an MCP-style tool call you can see below.</p>
+</header>
+<main>
+  <section aria-labelledby="chat-h">
+    <h2 id="chat-h">Talk to the assistant</h2>
+    <div id="log" role="log" aria-live="polite"></div>
+    <form id="form">
+      <input id="input" autocomplete="off" aria-label="Type a request" placeholder='Try: add milk to my shopping list'>
+      <button type="button" id="mic" class="ghost" aria-pressed="false" aria-label="Speak a request">Speak</button>
+      <button type="submit">Send</button>
+    </form>
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <section aria-labelledby="board-h">
+    <h2 id="board-h">Fridge door</h2>
+    <div class="board">
+      <div class="card shop"><h3>Shopping list</h3><ul id="shopping"></ul></div>
+      <div class="card chore"><h3>Chores and reminders</h3><ul id="chores"></ul></div>
+      <div class="card meal"><h3>Dinner this week</h3><ul id="meals"></ul></div>
+    </div>
+  </section>
+
+  <section id="tools" aria-labelledby="tools-h">
+    <h2 id="tools-h">Tool calls from the assistant</h2>
+    <p>The assistant turns what you say into a tool call, the same pattern Alexa+ uses to reach an MCP server. This page runs the tools locally in your browser.</p>
+    <div id="calls" aria-live="polite"></div>
+  </section>
+</main>
+<footer>Simulation only. Not affiliated with Amazon. Your lists are saved in this browser.</footer>
+
+<script>
+const DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const FULL={sunday:0,monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6,sun:0,mon:1,tue:2,tues:2,wed:3,thu:4,thur:4,thurs:4,fri:5,sat:6};
+const IDEAS=["Veggie stir-fry","Chicken tacos","Pasta with tomato sauce","Lentil soup","Paneer curry with rice","Egg fried rice","Baked potatoes with beans","Grilled cheese and tomato soup"];
+const $=id=>document.getElementById(id);
+let state=load();
+
+function load(){
+  try{const s=JSON.parse(localStorage.getItem("cmb"));if(s&&s.shopping)return s}catch(e){}
+  return{shopping:[],chores:[],meals:{}};
+}
+function save(){try{localStorage.setItem("cmb",JSON.stringify(state))}catch(e){}}
+
+/* ---------- tools (what an MCP server would expose) ---------- */
+const tools={
+  add_item({list,item}){
+    if(state[list].some(x=>x.toLowerCase()===item.toLowerCase()))return{ok:false,message:`${item} is already on the ${label(list)}.`};
+    state[list].push(item);return{ok:true,message:`Added ${item} to your ${label(list)}.`};
+  },
+  remove_item({list,item}){
+    const lists=list?[list]:["shopping","chores"];
+    for(const l of lists){
+      const i=state[l].findIndex(x=>x.toLowerCase()===item.toLowerCase()||x.toLowerCase().includes(item.toLowerCase()));
+      if(i>-1){const [r]=state[l].splice(i,1);return{ok:true,message:`Removed ${r} from your ${label(l)}.`}}
+    }
+    return{ok:false,message:`I couldn't find ${item} on your lists.`};
+  },
+  get_list({list}){
+    const items=state[list];
+    return{ok:true,message:items.length?`Your ${label(list)} has ${items.length}: ${items.join(", ")}.`:`Your ${label(list)} is empty.`};
+  },
+  clear_list({list}){state[list]=[];return{ok:true,message:`Cleared your ${label(list)}.`}},
+  set_dinner({day,meal}){state.meals[day]=meal;return{ok:true,message:`${DAYS[day]} dinner is ${meal}.`}},
+  get_dinner({day}){
+    const m=state.meals[day];const n=day===new Date().getDay()?"tonight":"on "+DAYS[day];
+    return{ok:!!m,message:m?`Dinner ${n} is ${m}.`:`Nothing is planned for dinner ${n}. Say "suggest dinner" for an idea.`};
+  },
+  suggest_dinner({day}){
+    const meal=IDEAS[Math.floor(Math.random()*IDEAS.length)];state.meals[day]=meal;
+    return{ok:true,message:`How about ${meal}? I put it on the plan for ${DAYS[day]}.`};
+  }
+};
+const label=l=>l==="shopping"?"shopping list":"chore list";
+
+/* ---------- understanding what the person said ---------- */
+const clean=s=>s.trim().replace(/^(some|a|an|the|my)\s+/i,"").replace(/[.!?]+$/,"");
+const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
+const listOf=w=>/chore|to-?do|reminder/.test(w)?"chores":"shopping";
+function dayOf(w){
+  const t=new Date().getDay();w=(w||"").toLowerCase();
+  if(!w||/tonight|today/.test(w))return t;
+  if(/tomorrow/.test(w))return(t+1)%7;
+  return FULL[w]!==undefined?FULL[w]:t;
+}
+const DAYRE="(tonight|today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)";
+function understand(raw){
+  const t=raw.trim().replace(/^alexa[, ]*/i,"").replace(/^please\s+/i,"");
+  let m;
+  if((m=t.match(/^(?:add|put)\s+(.+?)\s+(?:to|on|onto)\s+(?:my |the )?(shopping|grocery|groceries|chores?|to-?do)(?: list)?$/i)))
+    return["add_item",{list:listOf(m[2]),item:cap(clean(m[1]))}];
+  if((m=t.match(/^remind me to\s+(.+)$/i)))return["add_item",{list:"chores",item:cap(clean(m[1]))}];
+  if((m=t.match(/^(?:i )?(?:finished|completed|did|done with)\s+(.+)$/i)))return["remove_item",{list:"chores",item:clean(m[1])}];
+  if((m=t.match(/^(?:remove|delete|take off|cross off)\s+(.+?)(?:\s+from\s+(?:my |the )?(shopping|grocery|groceries|chores?|to-?do)(?: list)?)?$/i)))
+    return["remove_item",{list:m[2]?listOf(m[2]):null,item:clean(m[1])}];
+  if((m=t.match(/^clear\s+(?:my |the )?(shopping|grocery|groceries|chores?|to-?do)(?: list)?$/i)))return["clear_list",{list:listOf(m[1])}];
+  if((m=t.match(new RegExp("^(?:set |make |plan )?dinner (?:on |for )?"+DAYRE+"?\\s*(?:is|to|as)\\s+(.+)$","i"))))
+    return["set_dinner",{day:dayOf(m[1]),meal:cap(clean(m[2]))}];
+  if((m=t.match(new RegExp("^(?:set|plan) "+DAYRE+" dinner (?:to|as)\\s+(.+)$","i"))))
+    return["set_dinner",{day:dayOf(m[1]),meal:cap(clean(m[2]))}];
+  if(/suggest (a )?dinner|surprise me|what should i (cook|make)/i.test(t)){
+    m=t.match(new RegExp(DAYRE,"i"));return["suggest_dinner",{day:dayOf(m&&m[1])}];
+  }
+  if(/what'?s (for )?dinner|what'?s (the )?dinner/i.test(t)){
+    m=t.match(new RegExp(DAYRE,"i"));return["get_dinner",{day:dayOf(m&&m[1])}];
+  }
+  if((m=t.match(/(?:what'?s on|show|read|what'?s in)\s+(?:my |the )?(shopping|grocery|groceries|chores?|to-?do)(?: list)?/i)))
+    return["get_list",{list:listOf(m[1])}];
+  if(/what do i need|what do we need/i.test(t))return["get_list",{list:"shopping"}];
+  return null;
+}
+
+/* ---------- screen ---------- */
+function say(text,who){
+  const d=document.createElement("div");d.className="msg "+who;d.textContent=text;
+  $("log").appendChild(d);$("log").scrollTop=$("log").scrollHeight;
+}
+function logCall(name,args,res){
+  const a=document.createElement("div");a.textContent=JSON.stringify({method:"tools/call",params:{name,arguments:args}});
+  const b=document.createElement("div");b.className="res";b.textContent="result: "+JSON.stringify({ok:res.ok,text:res.message});
+  $("calls").prepend(b);$("calls").prepend(a);
+}
+function fill(id,items,empty){
+  const ul=$(id);ul.textContent="";
+  if(!items.length){const li=document.createElement("li");li.className="empty";li.textContent=empty;ul.appendChild(li);return}
+  items.forEach(x=>{const li=document.createElement("li");li.textContent=x;ul.appendChild(li)});
+}
+function render(){
+  fill("shopping",state.shopping,"Nothing yet");
+  fill("chores",state.chores,"All clear");
+  const ul=$("meals");ul.textContent="";
+  const today=new Date().getDay();
+  for(let i=0;i<7;i++){
+    const d=(today+i)%7;const li=document.createElement("li");if(i===0)li.className="today";
+    const b=document.createElement("b");b.textContent=DAYS[d];
+    const s=document.createElement("span");s.textContent=state.meals[d]||"-";
+    li.append(b,s);ul.appendChild(li);
+  }
+}
+function speak(text){
+  if(!("speechSynthesis" in window))return;
+  speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang="en-US";speechSynthesis.speak(u);
+}
+function handle(text){
+  if(!text.trim())return;
+  say(text,"me");
+  const hit=understand(text);let reply;
+  if(!hit){
+    reply='I did not catch that. Try "add eggs to my shopping list", "remind me to water the plants", or "what\'s for dinner".';
+  }else{
+    const [name,args]=hit;const res=tools[name](args);
+    logCall(name,args,res);save();render();reply=res.message;
+  }
+  say(reply,"bot");speak(reply);
+}
+
+/* ---------- wiring ---------- */
+$("form").addEventListener("submit",e=>{e.preventDefault();handle($("input").value);$("input").value=""});
+["add milk to my shopping list","remind me to take out the trash","dinner on friday is pasta","what's for dinner","suggest dinner","show my shopping list","remove milk"].forEach(t=>{
+  const b=document.createElement("button");b.type="button";b.className="ghost";b.textContent=t;
+  b.onclick=()=>handle(t);$("chips").appendChild(b);
+});
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+if(!SR){$("mic").disabled=true;$("mic").title="Speech input needs Chrome, Edge or Safari"}
+else{
+  const rec=new SR();rec.lang="en-US";rec.interimResults=false;
+  rec.onresult=e=>handle(e.results[0][0].transcript);
+  rec.onend=()=>$("mic").setAttribute("aria-pressed","false");
+  rec.onerror=()=>$("mic").setAttribute("aria-pressed","false");
+  $("mic").onclick=()=>{try{rec.start();$("mic").setAttribute("aria-pressed","true")}catch(e){}};
+}
+render();
+say('Hi! I\'m your kitchen helper. Tap a suggestion below, type, or press Speak.',"bot");
+</script>
+</body>
+</html>
